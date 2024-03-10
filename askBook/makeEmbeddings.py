@@ -27,28 +27,36 @@ def databaseConncetion():
 
     return cursor, conn
 
+def chormaDBConnection():
+    
 
-def createVectorAndAddToDB(cursor, conn):
+def createVectorAndAddToDB():
+    cursor, conn = databaseConncetion()
+
     # create vector
     lease_note_loader = PyPDFLoader("pdfs/03_Leases.pdf")
     finance_pages = lease_note_loader.load_and_split()
-    print("finance_docs ", finance_pages[3])
+    # print("finance_docs ", finance_pages[3])
     embeddings = OllamaEmbeddings()
 
     vector = FAISS.from_documents(finance_pages, embeddings)
     print("vector ", vector)
 
     # parameters to add to the database
-    vector_serialized = pickle.dumps(vector)
+    vector_serialized = pickle.dumps(
+        vector)
+    print("vector_serialized ", vector_serialized)
+    print("vector_serialized ", type(vector_serialized))
+
     document_id = "lease_note"
 
     # check if embeddings table exists if not create it
-    query = """IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'embeddings') CREATE TABLE embeddings (document_id NVARCHAR(255) PRIMARY KEY, embedding NVARCHAR(MAX))"""
+    query = """IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'vector_embeddings') CREATE TABLE vector_embeddings (document_id NVARCHAR(255) PRIMARY KEY, embedding VARBINARY(MAX))"""
     cursor.execute(query)
     conn.commit()
 
     add_vector_query = """
-    MERGE INTO embeddings AS target
+    MERGE INTO vector_embeddings AS target
     USING (VALUES (?, ?)) AS source (document_id, embedding)
     ON target.document_id = source.document_id
     WHEN MATCHED THEN
@@ -56,14 +64,40 @@ def createVectorAndAddToDB(cursor, conn):
     WHEN NOT MATCHED THEN
         INSERT (document_id, embedding) VALUES (?,?);
     """
+    print("vector_serialized ", type(vector_serialized))
+
     cursor.execute(add_vector_query, (document_id,
-                                      vector_serialized, document_id, vector_serialized))
+                                      vector, document_id, vector))
     conn.commit()
+
+    conn.close()
 
     return vector
 
 
-def askQuestion(vector):
+def getVectorFromDB(document_id):
+    cursor, conn = databaseConncetion()
+
+    retrieve_query = "SELECT * FROM vector_embeddings WHERE document_id = ?"
+    cursor.execute(retrieve_query, (document_id,))
+    row = cursor.fetchone()
+    print("row ", row)
+    print("type ", type(bytes(row[1], 'utf-8')))
+
+    if row:
+        vector_serialized = bytes(row[1], 'latin1')
+
+        vector = pickle.loads(
+            vector_serialized)
+
+        print("vector ", vector)
+    else:
+        print("No vector found for document_id ", document_id)
+
+    conn.close()
+
+
+def askQuestion():
     llm = Ollama(model="llama2")
     prompt = ChatPromptTemplate.from_template("""Answer the following question based on the provided context:
     <context>
@@ -74,6 +108,8 @@ def askQuestion(vector):
 
     document_chain = create_stuff_documents_chain(llm, prompt)
 
+    vector = getVectorFromDB("lease_note")
+
     retriever = vector.as_retriever()
     retrieval_chain = create_retrieval_chain(retriever, document_chain)
     response = retrieval_chain.invoke(
@@ -83,7 +119,5 @@ def askQuestion(vector):
 
 if __name__ == "__main__":
 
-    cursor, conn = databaseConncetion()
-
-    vector = createVectorAndAddToDB(cursor, conn)
-    askQuestion(vector)
+    vector = createVectorAndAddToDB()
+    askQuestion()
