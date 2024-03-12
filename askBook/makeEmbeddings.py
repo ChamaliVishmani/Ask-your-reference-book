@@ -11,6 +11,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import create_retrieval_chain
+from langchain_core.documents import Document
 
 
 def createChromaDB():
@@ -19,12 +20,15 @@ def createChromaDB():
     collection = chroma_client.create_collection(name="reference_collection")
 
 
-def addPDFtoChroma(file_path):
+def getCollection():
     chroma_client = chromadb.PersistentClient("chromaDB")
 
     collection = chroma_client.get_collection(name="reference_collection")
 
-    # file_path = r"pdfs\03_Leases.pdf"
+    return collection
+
+
+def addPDFtoChroma(collection, file_path):
 
     if not os.path.isfile(file_path):
         raise ValueError("File path %s does not exist" % file_path)
@@ -39,10 +43,6 @@ def addPDFtoChroma(file_path):
         page_id = "id3" + str(page.metadata["page"])
         # embedding done by chroma
         collection.add(documents=[page.page_content], ids=[page_id])
-
-    results = collection.query(
-        query_texts=["what are the two types of leases?"], n_results=2)
-    print("results ", results)
 
     print("Added pdf to chromaDB")
 
@@ -130,7 +130,13 @@ def getVectorFromDB(document_id):
 '''
 
 
-def askQuestion():
+def retrieveContextFromDB(collection, question):
+    results = collection.query(
+        query_texts=[question], n_results=2)
+    return results
+
+
+def askQuestion(collection):
     llm = Ollama(model="llama2")
     prompt = ChatPromptTemplate.from_template("""Answer the following question based on the provided context:
     <context>
@@ -141,18 +147,24 @@ def askQuestion():
 
     document_chain = create_stuff_documents_chain(llm, prompt)
 
-    vector = getVectorFromDB("lease_note")
+    retrievedContext = retrieveContextFromDB(
+        collection, "What is a lease and what are the two types of leases?")
 
-    retriever = vector.as_retriever()
-    retrieval_chain = create_retrieval_chain(retriever, document_chain)
-    response = retrieval_chain.invoke(
-        {"input": "What is a lease and what are the two types of leases?"})
-    print(response)
+    retrievedContextStr = ' '.join(
+        item for sublist in retrievedContext["documents"] for item in sublist)
+
+    response = document_chain.invoke(
+        {"input": "What is a lease and what are the two types of leases?", "context": [Document(page_content=retrievedContextStr)]})
+
+    return response
 
 
 if __name__ == "__main__":
 
     # vector = createVectorAndAddToDB()
     # askQuestion()
+    collection = getCollection()
     file_path = r"pdfs\03_Leases.pdf"
-    addPDFtoChroma(file_path)
+    # addPDFtoChroma(collection, file_path)
+    answer = askQuestion(collection)
+    print("answer ", answer)
