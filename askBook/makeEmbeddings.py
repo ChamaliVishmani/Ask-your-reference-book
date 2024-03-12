@@ -1,6 +1,9 @@
 import pypyodbc
 import pickle
 
+import chromadb
+import os
+
 from langchain_community.llms import Ollama
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OllamaEmbeddings
@@ -10,6 +13,41 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import create_retrieval_chain
 
 
+def createChromaDB():
+    chroma_client = chromadb.PersistentClient("chromaDB")
+
+    collection = chroma_client.create_collection(name="reference_collection")
+
+
+def addPDFtoChroma(file_path):
+    chroma_client = chromadb.PersistentClient("chromaDB")
+
+    collection = chroma_client.get_collection(name="reference_collection")
+
+    # file_path = r"pdfs\03_Leases.pdf"
+
+    if not os.path.isfile(file_path):
+        raise ValueError("File path %s does not exist" % file_path)
+
+    if not file_path.lower().endswith(".pdf"):
+        raise ValueError("File path %s is not a valid PDF file" % file_path)
+
+    loader = PyPDFLoader(file_path)
+    pages = loader.load_and_split()
+
+    for page in pages:
+        page_id = "id3" + str(page.metadata["page"])
+        # embedding done by chroma
+        collection.add(documents=[page.page_content], ids=[page_id])
+
+    results = collection.query(
+        query_texts=["what are the two types of leases?"], n_results=2)
+    print("results ", results)
+
+    print("Added pdf to chromaDB")
+
+
+'''
 def databaseConncetion():
     server_name = "CHAMALI-ASUSVIV\SQLEXPRESS"
     database_name = "ask-ref-db"
@@ -27,9 +65,6 @@ def databaseConncetion():
 
     return cursor, conn
 
-def chormaDBConnection():
-    
-
 def createVectorAndAddToDB():
     cursor, conn = databaseConncetion()
 
@@ -45,8 +80,6 @@ def createVectorAndAddToDB():
     # parameters to add to the database
     vector_serialized = pickle.dumps(
         vector)
-    print("vector_serialized ", vector_serialized)
-    print("vector_serialized ", type(vector_serialized))
 
     document_id = "lease_note"
 
@@ -74,7 +107,6 @@ def createVectorAndAddToDB():
 
     return vector
 
-
 def getVectorFromDB(document_id):
     cursor, conn = databaseConncetion()
 
@@ -95,6 +127,7 @@ def getVectorFromDB(document_id):
         print("No vector found for document_id ", document_id)
 
     conn.close()
+'''
 
 
 def askQuestion():
@@ -119,5 +152,7 @@ def askQuestion():
 
 if __name__ == "__main__":
 
-    vector = createVectorAndAddToDB()
-    askQuestion()
+    # vector = createVectorAndAddToDB()
+    # askQuestion()
+    file_path = r"pdfs\03_Leases.pdf"
+    addPDFtoChroma(file_path)
