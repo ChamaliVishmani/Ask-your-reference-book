@@ -1,35 +1,20 @@
-import pypyodbc
-import pickle
-
-import chromadb
-import os
-
-from langchain_community.llms import Ollama
+from langchain.document_loaders.csv_loader import CSVLoader
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.embeddings.sentence_transformer import (
+    SentenceTransformerEmbeddings,)
+from langchain_community.vectorstores import Chroma
+from langchain_community.llms import HuggingFaceEndpoint
+from langchain import hub
+from langchain_core.runnables import RunnablePassthrough
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains import create_retrieval_chain
-from langchain_core.documents import Document
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-def createChromaDB():
-    chroma_client = chromadb.PersistentClient("chromaDB")
-
-    collection = chroma_client.create_collection(name="reference_collection")
-
-
-def getCollection():
-    chroma_client = chromadb.PersistentClient("chromaDB")
-
-    collection = chroma_client.get_collection(name="reference_collection")
-
-    return collection
-
-
-def addPDFtoChroma(collection, file_path):
-
+def addPDFToChroma(file_path):
     if not os.path.isfile(file_path):
         raise ValueError("File path %s does not exist" % file_path)
 
@@ -37,136 +22,48 @@ def addPDFtoChroma(collection, file_path):
         raise ValueError("File path %s is not a valid PDF file" % file_path)
 
     loader = PyPDFLoader(file_path)
-    pages = loader.load_and_split()
+    data = loader.load()
 
-    for page in pages:
-        page_id = "id3" + str(page.metadata["page"])
-        # embedding done by chroma
-        collection.add(documents=[page.page_content], ids=[page_id])
+    # split to chunks
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+    docs = text_splitter.split_documents(data)
 
-    print("Added pdf to chromaDB")
+    embedding_func = SentenceTransformerEmbeddings(
+        model_name="all-MiniLM-L6-v2")
 
-
-'''
-def databaseConncetion():
-    server_name = "CHAMALI-ASUSVIV\SQLEXPRESS"
-    database_name = "ask-ref-db"
-    driver_name = "SQL Server"
-
-    connection_string = f"""DRIVER={{{driver_name}}};SERVER={server_name};DATABASE={database_name};Trust_Connection=yes;"""
-    conn = pypyodbc.connect(connection_string)
-
-    if conn:
-        print("Connected to the database")
-    else:
-        print("Connection failed")
-
-    cursor = conn.cursor()
-
-    return cursor, conn
-
-def createVectorAndAddToDB():
-    cursor, conn = databaseConncetion()
-
-    # create vector
-    lease_note_loader = PyPDFLoader("pdfs/03_Leases.pdf")
-    finance_pages = lease_note_loader.load_and_split()
-    # print("finance_docs ", finance_pages[3])
-    embeddings = OllamaEmbeddings()
-
-    vector = FAISS.from_documents(finance_pages, embeddings)
-    print("vector ", vector)
-
-    # parameters to add to the database
-    vector_serialized = pickle.dumps(
-        vector)
-
-    document_id = "lease_note"
-
-    # check if embeddings table exists if not create it
-    query = """IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'vector_embeddings') CREATE TABLE vector_embeddings (document_id NVARCHAR(255) PRIMARY KEY, embedding VARBINARY(MAX))"""
-    cursor.execute(query)
-    conn.commit()
-
-    add_vector_query = """
-    MERGE INTO vector_embeddings AS target
-    USING (VALUES (?, ?)) AS source (document_id, embedding)
-    ON target.document_id = source.document_id
-    WHEN MATCHED THEN
-        UPDATE SET embedding = source.embedding
-    WHEN NOT MATCHED THEN
-        INSERT (document_id, embedding) VALUES (?,?);
-    """
-    print("vector_serialized ", type(vector_serialized))
-
-    cursor.execute(add_vector_query, (document_id,
-                                      vector, document_id, vector))
-    conn.commit()
-
-    conn.close()
-
-    return vector
-
-def getVectorFromDB(document_id):
-    cursor, conn = databaseConncetion()
-
-    retrieve_query = "SELECT * FROM vector_embeddings WHERE document_id = ?"
-    cursor.execute(retrieve_query, (document_id,))
-    row = cursor.fetchone()
-    print("row ", row)
-    print("type ", type(bytes(row[1], 'utf-8')))
-
-    if row:
-        vector_serialized = bytes(row[1], 'latin1')
-
-        vector = pickle.loads(
-            vector_serialized)
-
-        print("vector ", vector)
-    else:
-        print("No vector found for document_id ", document_id)
-
-    conn.close()
-'''
+    # load to chroma
+    chromaDB = Chroma.from_documents(docs, embedding_func)
+    return chromaDB, docs
 
 
-def retrieveContextFromDB(collection, question):
-    results = collection.query(
-        query_texts=[question], n_results=2)
-    return results
+def createLLM():
+    gemma_repo_id = "google/gemma-2b-it"
+
+    llm = HuggingFaceEndpoint(repo_id=gemma_repo_id,
+                              max_length=1024, temperature=0.1)
+    return llm
 
 
-def askQuestion(question):
-    collection = getCollection()
-    llm = Ollama(model="llama2")
-    prompt = ChatPromptTemplate.from_template("""Answer the following question based on the provided context:
-    <context>
-    {context}
-    <context>
+def createRAGChain():
+    retriever = chromaDB.as_retriever(
+        search_type="mmr", search_kwargs={'k': 4, 'fetch_k': 20})
+    prompt = hub.pull("rlm/rag-prompt")
 
-    Question: {input}""")
-
-    document_chain = create_stuff_documents_chain(llm, prompt)
-
-    retrievedContext = retrieveContextFromDB(
-        collection, question)
-
-    retrievedContextStr = ' '.join(
-        item for sublist in retrievedContext["documents"] for item in sublist)
-
-    response = document_chain.invoke(
-        {"input": question, "context": [Document(page_content=retrievedContextStr)]})
-
-    return response
+    rag_chain = (
+        {"context": retriever | formatDocs, "question": RunnablePassthrough()
+         } | prompt | llm
+    )
+    print(rag_chain.invoke("what are the two types of leases?"))
 
 
-if __name__ == "__main__":
+def formatDocs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
 
-    # vector = createVectorAndAddToDB()
-    # askQuestion()
-    collection = getCollection()
-    file_path = r"pdfs\03_Leases.pdf"
-    # addPDFtoChroma(collection, file_path)
-    answer = askQuestion(
-        "What is a lease and what are the two types of leases?")
-    print("answer ", answer)
+
+file_path = r"pdfs\03_Leases.pdf"
+llm = createLLM()
+chromaDB, docs = addPDFToChroma(file_path)
+createRAGChain()
+
+# next : https://colab.research.google.com/drive/1JCeL1d6dyC2MrtLI45aII9kIF9m6eOPe#scrollTo=-jZSd_oOCjP5
+# TODO - persistent storage for chromaDB
