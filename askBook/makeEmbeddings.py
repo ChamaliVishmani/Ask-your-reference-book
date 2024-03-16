@@ -136,7 +136,8 @@ def retrieveContextFromDB(collection, question):
     return results
 
 
-def askQuestion(collection):
+def askQuestion(question):
+    collection = getCollection()
     llm = Ollama(model="llama2")
     prompt = ChatPromptTemplate.from_template("""Answer the following question based on the provided context:
     <context>
@@ -148,13 +149,13 @@ def askQuestion(collection):
     document_chain = create_stuff_documents_chain(llm, prompt)
 
     retrievedContext = retrieveContextFromDB(
-        collection, "What is a lease and what are the two types of leases?")
+        collection, question)
 
     retrievedContextStr = ' '.join(
         item for sublist in retrievedContext["documents"] for item in sublist)
 
     response = document_chain.invoke(
-        {"input": "What is a lease and what are the two types of leases?", "context": [Document(page_content=retrievedContextStr)]})
+        {"input": question, "context": [Document(page_content=retrievedContextStr)]})
 
     return response
 
@@ -166,5 +167,6 @@ if __name__ == "__main__":
     collection = getCollection()
     file_path = r"pdfs\03_Leases.pdf"
     # addPDFtoChroma(collection, file_path)
-    answer = askQuestion(collection)
+    answer = askQuestion(
+        "What is a lease and what are the two types of leases?")
     print("answer ", answer)
