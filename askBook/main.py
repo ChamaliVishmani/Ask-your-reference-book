@@ -44,7 +44,7 @@ def createLLM():
     return llm
 
 
-def createRAGChain():
+def createRAGChain(chromaDB, llm):
     retriever = chromaDB.as_retriever(
         search_type="mmr", search_kwargs={'k': 4, 'fetch_k': 20})
     prompt = hub.pull("rlm/rag-prompt")
@@ -53,7 +53,11 @@ def createRAGChain():
         {"context": retriever | formatDocs, "question": RunnablePassthrough()
          } | prompt | llm
     )
-    print(rag_chain.invoke("what are the two types of leases?"))
+    return rag_chain
+
+
+def askQuestion(question, rag_chain):
+    return rag_chain.invoke(question)
 
 
 def formatDocs(docs):
@@ -63,7 +67,8 @@ def formatDocs(docs):
 file_path = r"pdfs\03_Leases.pdf"
 llm = createLLM()
 chromaDB, docs = addPDFToChroma(file_path)
-createRAGChain()
+rag_chain = createRAGChain(chromaDB, llm)
 
-# next : https://colab.research.google.com/drive/1JCeL1d6dyC2MrtLI45aII9kIF9m6eOPe#scrollTo=-jZSd_oOCjP5
-# TODO - persistent storage for chromaDB
+question = "What is the definition of a lease?"
+answer = askQuestion(question, rag_chain)
+print(answer)
