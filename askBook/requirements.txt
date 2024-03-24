@@ -1,12 +1,7 @@
-ipykernel
 langchain==0.1.6
 langchain-community==0.0.19
-langchain-core
-langchain-openai
-langsmith
-openai
-python-dotenv
-beautifulsoup4
-faiss-cpu
-pypyodbc
-chromadb
+langchain-core==0.1.32
+langchain-openai==0.0.6
+langchain-text-splitters==0.0.1
+pikepdf==8.13.0
+sentence-transformers==2.5.1

@@ -2,3 +2,4 @@ ask-ref-env
 __pycache__
 pdfs
 chromaDB
+.env
